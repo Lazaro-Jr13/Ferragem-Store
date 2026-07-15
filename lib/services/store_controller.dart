@@ -8,6 +8,7 @@ import '../models/sale.dart';
 import '../models/sale_item.dart';
 import 'app_repository.dart';
 
+// Categorias oficiais do sistema (definidas apenas aqui para evitar conflitos)
 const List<String> defaultCategories = <String>[
   'Ferramentas',
   'Fixacao',
@@ -329,7 +330,6 @@ class StoreController extends ChangeNotifier {
         first.day == second.day;
   }
 
-  // Métodos de manipulação do carrinho baseados em Map
   void decrementCartQuantity(Product product) {
     final currentQty = _cart[product.id] ?? 0;
     
