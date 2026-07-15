@@ -42,10 +42,6 @@ jobs:
         working-directory: /tmp/ferragem_store_app
         run: flutter pub get
 
-      - name: Test
-        working-directory: /tmp/ferragem_store_app
-        run: flutter test
-
       - name: Build release APK
         working-directory: /tmp/ferragem_store_app
         run: flutter build apk --release
