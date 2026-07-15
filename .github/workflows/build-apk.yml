@@ -1,0 +1,58 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create temp Flutter project
+        run: |
+          rm -rf /tmp/ferragem_store_app
+          flutter create --platforms=android /tmp/ferragem_store_app
+
+      - name: Copy source files
+        run: |
+          rm -rf /tmp/ferragem_store_app/lib
+          cp -R lib /tmp/ferragem_store_app/lib
+          cp pubspec.yaml /tmp/ferragem_store_app/pubspec.yaml
+          if [ -f analysis_options.yaml ]; then cp analysis_options.yaml /tmp/ferragem_store_app/analysis_options.yaml; fi
+          if [ -d assets ]; then cp -R assets /tmp/ferragem_store_app/assets; fi
+
+      - name: Pub get
+        working-directory: /tmp/ferragem_store_app
+        run: flutter pub get
+
+      - name: Test
+        working-directory: /tmp/ferragem_store_app
+        run: flutter test
+
+      - name: Build release APK
+        working-directory: /tmp/ferragem_store_app
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: /tmp/ferragem_store_app/build/app/outputs/flutter-apk/app-release.apk
+          
