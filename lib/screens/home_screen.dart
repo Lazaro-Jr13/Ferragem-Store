@@ -5,14 +5,11 @@ import '../models/product.dart';
 import '../models/sale.dart';
 import '../services/store_controller.dart';
 
-// Constantes globais de formatação que estavam ausentes
 final NumberFormat currencyFormat = NumberFormat.simpleCurrency(decimalDigits: 2);
 final DateFormat dateTimeFormat = DateFormat('dd/MM/yyyy HH:mm');
 
-// Lista padrão de categorias caso não venham do controller
 const List<String> defaultCategories = ['Geral', 'Ferramentas', 'Construção', 'Elétrica', 'Pintura', 'Hidráulica'];
 
-// Telas auxiliares para as abas que não estão implementadas neste arquivo
 class StockTab extends StatelessWidget {
   const StockTab({super.key, required this.controller, required this.onRestock});
   final StoreController controller;
@@ -51,9 +48,7 @@ class ReportsTab extends StatelessWidget {
   }
 }
 
-// Métodos de diálogo e sheets que são chamados no controlador
 Future<Product?> showProductFormSheet(BuildContext context, {Product? product}) async {
-  // Retorna nulo ou objeto simulado/formulario para fins de compilação
   return null;
 }
 
@@ -192,7 +187,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) {
       return;
     }
-    _showMessage('Stock atualizado para ${product.nome}.');
+    _showMessage('Stock updated.');
   }
 
   Future<void> _finalizeSale() async {
@@ -463,7 +458,7 @@ class _ProductsTabState extends State<ProductsTab> {
                   )
                 : ListView.separated(
                     itemCount: products.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 12), // Correção do (_, _) que quebrava o compilador
+                    separatorBuilder: (context, index) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final product = products[index];
                       return Card(
@@ -559,7 +554,6 @@ class _ProductsTabState extends State<ProductsTab> {
     );
   }
 }
-
 class CheckoutTab extends StatefulWidget {
   const CheckoutTab({
     super.key,
@@ -574,4 +568,293 @@ class CheckoutTab extends StatefulWidget {
   final VoidCallback onShowHistory;
   final void Function(String message) onShowMessage;
 
-  @ove
+  @override
+  State<CheckoutTab> createState() => _CheckoutTabState();
+}
+
+class _CheckoutTabState extends State<CheckoutTab> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredProducts = widget.controller.products.where((product) {
+      return product.nome.toLowerCase().contains(
+            _searchController.text.trim().toLowerCase(),
+          );
+    }).toList()
+      ..sort((a, b) => a.nome.compareTo(b.nome));
+
+    final cartEntries = widget.controller.cartEntries;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        'Adicionar ao carrinho',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: widget.onShowHistory,
+                      icon: const Icon(Icons.history),
+                      label: const Text('Historico'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    hintText: 'Pesquisar para venda',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (filteredProducts.isEmpty)
+                  const _EmptyState(
+                    icon: Icons.search_off,
+                    title: 'Nenhum produto encontrado',
+                    message: 'Tente outro termo para iniciar a venda.',
+                  )
+                else
+                  ...filteredProducts.map(
+                    (product) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Card(
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          title: Text(product.nome),
+                          subtitle: Text(
+                            '${product.categoria}  |  Stock: ${product.stock}',
+                          ),
+                          trailing: SizedBox(
+                            width: 110,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Text('${currencyFormat.format(product.preco)}   '),
+                                IconButton(
+                                  icon: const Icon(Icons.add_shopping_cart, color: Color(0xFFFF7A00)),
+                                  onPressed: () {
+                                    widget.controller.addToCart(product);
+                                    widget.onShowMessage('${product.nome} adicionado ao carrinho.');
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (cartEntries.isNotEmpty) ...[
+          Card(
+            color: const Color(0xFFF9F9F9),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Itens no Carrinho',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  ...cartEntries.map((entry) {
+                    final product = entry.product;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(product.nome),
+                      subtitle: Text('${entry.quantity}x ${currencyFormat.format(product.preco)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.remove_circle_outline),
+                            onPressed: () => widget.controller.decrementCartQuantity(product),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => widget.controller.removeFromCart(product),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.between,
+                    children: [
+                      const Text('Total:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(
+                        currencyFormat.format(widget.controller.cartTotal),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFF7A00)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF7A00)),
+                      onPressed: widget.onFinalizeSale,
+                      child: const Text('Finalizar Venda'),
+                    ),
+                  )
+                ],
+              ),
+            ),
+          )
+        ]
+      ],
+    );
+  }
+}
+
+class _TagChip extends StatelessWidget {
+  const _TagChip({
+    required this.label,
+    this.color,
+  });
+
+  final String label;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color ?? const Color(0xFFECECEC),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              textAlign: TextAlign.center,
+              message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: selected ? const Color(0xFFFF7A00) : null),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: selected ? const Color(0xFFFF7A00) : null,
+          fontWeight: selected ? FontWeight.bold : null,
+        ),
+      ),
+      selected: selected,
+      selectedTileColor: const Color(0xFFFFE1D6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onTap: onTap,
+    );
+  }
+}
+
+class _CartBadge extends StatelessWidget {
+  const _CartBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) {
+      return const Icon(Icons.shopping_cart_outlined);
+    }
+
+    return Badge(
+      label: Text('$count'),
+      backgroundColor: const Color(0xFFFF7A00),
+      child: const Icon(Icons.shopping_cart_outlined),
+    );
+  }
+}
