@@ -1,348 +1,835 @@
-import 'dart:collection';
-import 'dart:math';
-
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../models/product.dart';
 import '../models/sale.dart';
-import '../models/sale_item.dart';
-import 'app_repository.dart';
+import '../services/store_controller.dart';
 
-// Categorias oficiais do sistema (definidas apenas aqui para evitar conflitos)
-const List<String> defaultCategories = <String>[
-  'Ferramentas',
-  'Fixacao',
-  'Tintas',
-  'Eletrica',
-  'Hidraulica',
-  'Seguranca',
-  'Outros',
-];
+final NumberFormat currencyFormat = NumberFormat.simpleCurrency(decimalDigits: 2);
+final DateFormat dateTimeFormat = DateFormat('dd/MM/yyyy HH:mm');
 
-class CartEntry {
-  const CartEntry({
-    required this.product,
-    required this.quantity,
+// Widgets auxiliares reutilizáveis de estilo estático
+class _TagChip extends StatelessWidget {
+  const _TagChip({
+    required this.label,
+    this.color,
   });
 
-  final Product product;
-  final int quantity;
+  final String label;
+  final Color? color;
 
-  double get total => product.preco * quantity;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color ?? const Color(0xFFECECEC),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+      ),
+    );
+  }
 }
 
-class ProductSalesSummary {
-  const ProductSalesSummary({
-    required this.productName,
-    required this.quantitySold,
-    required this.revenue,
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.message,
   });
 
-  final String productName;
-  final int quantitySold;
-  final double revenue;
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.grey[600],
+                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class StoreController extends ChangeNotifier {
-  StoreController({required this.repository});
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final AppRepository repository;
-  final Random _random = Random();
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
 
-  final Map<String, int> _cart = <String, int>{};
-  List<Product> _products = <Product>[];
-  List<Sale> _sales = <Sale>[];
-  bool _isLoading = false;
-
-  List<Product> get products => UnmodifiableListView<Product>(_products);
-  List<Sale> get sales => UnmodifiableListView<Sale>(_sales);
-  bool get isLoading => _isLoading;
-  int get cartItemsCount =>
-      _cart.values.fold<int>(0, (sum, quantity) => sum + quantity);
-
-  List<CartEntry> get cartEntries {
-    return _cart.entries.map((entry) {
-      final product = _products.firstWhere((item) => item.id == entry.key);
-      return CartEntry(product: product, quantity: entry.value);
-    }).toList();
-  }
-
-  double get cartTotal => cartEntries.fold<double>(
-        0,
-        (sum, entry) => sum + entry.total,
-      );
-
-  double get totalStockValue => _products.fold<double>(
-        0,
-        (sum, product) => sum + (product.preco * product.stock),
-      );
-
-  List<Product> get lowStockProducts =>
-      _products.where((product) => product.stock <= 5).toList()
-        ..sort((a, b) => a.stock.compareTo(b.stock));
-
-  Future<void> load() async {
-    _isLoading = true;
-    notifyListeners();
-
-    final products = await repository.loadProducts();
-    final sales = await repository.loadSales();
-
-    _products = products.isEmpty ? _seedProducts() : products;
-    _sales = sales;
-
-    if (products.isEmpty) {
-      await repository.saveProducts(_products);
-    }
-
-    _isLoading = false;
-    notifyListeners();
-  }
-
-  Future<void> addProduct(Product product) async {
-    _products = <Product>[product, ..._products];
-    await repository.saveProducts(_products);
-    notifyListeners();
-  }
-
-  Future<void> updateProduct(Product updatedProduct) async {
-    _products = _products
-        .map((product) => product.id == updatedProduct.id ? updatedProduct : product)
-        .toList();
-    await repository.saveProducts(_products);
-    notifyListeners();
-  }
-
-  Future<void> deleteProduct(String productId) async {
-    _products = _products.where((product) => product.id != productId).toList();
-    _cart.remove(productId);
-    await repository.saveProducts(_products);
-    notifyListeners();
-  }
-
-  String? addToCart(Product product) {
-    final currentQty = _cart[product.id] ?? 0;
-    if (currentQty >= product.stock) {
-      return 'Stock insuficiente para adicionar mais unidades.';
-    }
-
-    _cart[product.id] = currentQty + 1;
-    notifyListeners();
-    return null;
-  }
-
-  String? updateCartQuantity(String productId, int quantity) {
-    final product = _products.firstWhere((item) => item.id == productId);
-
-    if (quantity <= 0) {
-      _cart.remove(productId);
-      notifyListeners();
-      return null;
-    }
-
-    if (quantity > product.stock) {
-      return 'Nao pode vender mais do que o stock disponivel.';
-    }
-
-    _cart[productId] = quantity;
-    notifyListeners();
-    return null;
-  }
-
-  void clearCart() {
-    _cart.clear();
-    notifyListeners();
-  }
-
-  Future<String?> finalizeSale() async {
-    if (_cart.isEmpty) {
-      return 'O carrinho esta vazio.';
-    }
-
-    final updatedProducts = <Product>[];
-    final saleItems = <SaleItem>[];
-
-    for (final product in _products) {
-      final quantity = _cart[product.id] ?? 0;
-      if (quantity == 0) {
-        updatedProducts.add(product);
-        continue;
-      }
-
-      if (quantity > product.stock) {
-        return 'Stock insuficiente para ${product.nome}.';
-      }
-
-      updatedProducts.add(
-        product.copyWith(
-          stock: product.stock - quantity,
-          ultimaAtualizacao: DateTime.now(),
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: selected ? const Color(0xFFFF7A00) : null),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: selected ? const Color(0xFFFF7A00) : null,
+          fontWeight: selected ? FontWeight.bold : null,
         ),
-      );
+      ),
+      selected: selected,
+      selectedTileColor: const Color(0xFFFFE1D6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      onTap: onTap,
+    );
+  }
+}
 
-      saleItems.add(
-        SaleItem(
-          productId: product.id,
-          productName: product.nome,
-          category: product.categoria,
-          unitPrice: product.preco,
-          quantity: quantity,
-        ),
-      );
+class _CartBadge extends StatelessWidget {
+  const _CartBadge({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) {
+      return const Icon(Icons.shopping_cart_outlined);
     }
 
-    final total = saleItems.fold<double>(0, (sum, item) => sum + item.total);
-    final sale = Sale(
-      id: _generateId(),
-      data: DateTime.now(),
-      itens: saleItems,
-      total: total,
+    return Badge(
+      label: Text('$count'),
+      backgroundColor: const Color(0xFFFF7A00),
+      child: const Icon(Icons.shopping_cart_outlined),
+    );
+  }
+}
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({
+    super.key,
+    required this.controller,
+  });
+
+  final StoreController controller;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _currentIndex = 0;
+
+  StoreController get controller => widget.controller;
+
+  String get _title {
+    switch (_currentIndex) {
+      case 0:
+        return 'Produtos';
+      case 1:
+        return 'Caixa';
+      case 2:
+        return 'Stock';
+      case 3:
+        return 'Relatorios';
+      default:
+        return 'Ferragem Store';
+    }
+  }
+
+  Future<void> _openProductForm([Product? product]) async {
+    // Implementação básica se o modal não estiver noutro ficheiro
+    _showMessage('Funcionalidade de formulário de produto');
+  }
+
+  Future<void> _confirmDelete(Product product) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Excluir produto'),
+          content: Text('Deseja excluir ${product.nome}?'),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Excluir'),
+            ),
+          ],
+        );
+      },
     );
 
-    _products = updatedProducts;
-    _sales = <Sale>[sale, ..._sales];
-    _cart.clear();
+    if (confirmed != true) return;
 
-    await repository.saveProducts(_products);
-    await repository.saveSales(_sales);
-    notifyListeners();
-
-    return null;
+    await controller.deleteProduct(product.id);
+    if (!mounted) return;
+    _showMessage('Produto removido.');
   }
 
-  Future<void> restockProduct(String productId, int amount) async {
-    if (amount <= 0) {
+  Future<void> _openRestockDialog(Product product) async {
+    final TextEditingController quantityCtrl = TextEditingController();
+    final amount = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Repor Stock: ${product.nome}'),
+        content: TextField(
+          controller: quantityCtrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Quantidade'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final val = int.tryParse(quantityCtrl.text);
+              Navigator.pop(context, val);
+            },
+            child: const Text('Confirmar'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || amount == null || amount <= 0) return;
+
+    await controller.restockProduct(product.id, amount);
+    if (!mounted) return;
+    _showMessage('Stock atualizado com sucesso.');
+  }
+
+  Future<void> _finalizeSale() async {
+    final error = await controller.finalizeSale();
+    if (!mounted) return;
+
+    if (error != null) {
+      _showMessage(error);
       return;
     }
 
-    _products = _products.map((product) {
-      if (product.id != productId) {
-        return product;
-      }
-
-      return product.copyWith(
-        stock: product.stock + amount,
-        ultimaAtualizacao: DateTime.now(),
-      );
-    }).toList();
-
-    await repository.saveProducts(_products);
-    notifyListeners();
+    _showMessage('Venda registada com sucesso.');
   }
 
-  double salesTotalForDay(DateTime date) {
-    return _sales
-        .where((sale) => _isSameDate(sale.data, date))
-        .fold<double>(0, (sum, sale) => sum + sale.total);
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
-  double salesTotalForLastDays(int days) {
-    final now = DateTime.now();
-    final start =
-        DateTime(now.year, now.month, now.day).subtract(Duration(days: days - 1));
-
-    return _sales.where((sale) => !sale.data.isBefore(start)).fold<double>(
-          0,
-          (sum, sale) => sum + sale.total,
+  void _showSalesHistorySheet(BuildContext context, List<Sale> sales) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Histórico de Vendas',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              Expanded(
+                child: sales.isEmpty
+                    ? const Center(child: Text('Nenhuma venda registrada.'))
+                    : ListView.builder(
+                        itemCount: sales.length,
+                        itemBuilder: (context, index) {
+                          final sale = sales[index];
+                          // RESOLVIDO: Trocado "items" para "itens" do modelo original!
+                          return ListTile(
+                            title: Text('Venda #${sale.id}'),
+                            subtitle: Text('Itens: ${sale.itens.length} | Total: ${currencyFormat.format(sale.total)}'),
+                            trailing: Text(dateTimeFormat.format(sale.data)),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
         );
+      },
+    );
   }
 
-  List<ProductSalesSummary> bestSellingProducts({int limit = 5}) {
-    final Map<String, ProductSalesSummary> totals =
-        <String, ProductSalesSummary>{};
-
-    for (final sale in _sales) {
-      for (final item in sale.itens) {
-        final existing = totals[item.productId];
-        totals[item.productId] = ProductSalesSummary(
-          productName: item.productName,
-          quantitySold: (existing?.quantitySold ?? 0) + item.quantity,
-          revenue: (existing?.revenue ?? 0) + item.total,
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(_title),
+            actions: <Widget>[
+              IconButton(
+                tooltip: 'Historico',
+                onPressed: () => _showSalesHistorySheet(context, controller.sales),
+                icon: const Icon(Icons.receipt_long_outlined),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: IconButton(
+                  tooltip: 'Carrinho',
+                  onPressed: () => setState(() => _currentIndex = 1),
+                  icon: _CartBadge(count: controller.cartItemsCount),
+                ),
+              ),
+            ],
+          ),
+          drawer: Drawer(
+            child: SafeArea(
+              child: ListView(
+                padding: const EdgeInsets.all(12),
+                children: <Widget>[
+                  const ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: Color(0xFFFF7A00),
+                      child: Icon(Icons.storefront, color: Colors.white),
+                    ),
+                    title: Text(
+                      'Ferragem Store',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text('Gestao offline de loja'),
+                  ),
+                  const SizedBox(height: 8),
+                  _DrawerItem(
+                    label: 'Produtos',
+                    icon: Icons.inventory_2_outlined,
+                    selected: _currentIndex == 0,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      setState(() => _currentIndex = 0);
+                    },
+                  ),
+                  _DrawerItem(
+                    label: 'Caixa',
+                    icon: Icons.point_of_sale_outlined,
+                    selected: _currentIndex == 1,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      setState(() => _currentIndex = 1);
+                    },
+                  ),
+                  _DrawerItem(
+                    label: 'Stock',
+                    icon: Icons.warehouse_outlined,
+                    selected: _currentIndex == 2,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      setState(() => _currentIndex = 2);
+                    },
+                  ),
+                  _DrawerItem(
+                    label: 'Relatorios',
+                    icon: Icons.bar_chart_outlined,
+                    selected: _currentIndex == 3,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      setState(() => _currentIndex = 3);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          floatingActionButton: _currentIndex == 0
+              ? FloatingActionButton.extended(
+                  onPressed: _openProductForm,
+                  backgroundColor: const Color(0xFFFF7A00),
+                  foregroundColor: Colors.white,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Novo Produto'),
+                )
+              : null,
+          bottomNavigationBar: NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (index) => setState(() => _currentIndex = index),
+            destinations: const <NavigationDestination>[
+              NavigationDestination(
+                icon: Icon(Icons.inventory_2_outlined),
+                selectedIcon: Icon(Icons.inventory_2),
+                label: 'Produtos',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.point_of_sale_outlined),
+                selectedIcon: Icon(Icons.point_of_sale),
+                label: 'Caixa',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.warehouse_outlined),
+                selectedIcon: Icon(Icons.warehouse),
+                label: 'Stock',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.bar_chart_outlined),
+                selectedIcon: Icon(Icons.bar_chart),
+                label: 'Relatorios',
+              ),
+            ],
+          ),
+          body: controller.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : IndexedStack(
+                  index: _currentIndex,
+                  children: <Widget>[
+                    ProductsTab(
+                      controller: controller,
+                      onEdit: _openProductForm,
+                      onDelete: _confirmDelete,
+                    ),
+                    CheckoutTab(
+                      controller: controller,
+                      onFinalizeSale: _finalizeSale,
+                      onShowHistory: () => _showSalesHistorySheet(context, controller.sales),
+                      onShowMessage: _showMessage,
+                    ),
+                    StockTab(
+                      controller: controller,
+                      onRestock: _openRestockDialog,
+                    ),
+                    ReportsTab(controller: controller),
+                  ],
+                ),
         );
-      }
-    }
+      },
+    );
+  }
+}
+class ProductsTab extends StatefulWidget {
+  const ProductsTab({
+    super.key,
+    required this.controller,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
-    final summaries = totals.values.toList()
-      ..sort((a, b) => b.quantitySold.compareTo(a.quantitySold));
-    return summaries.take(limit).toList();
+  final StoreController controller;
+  final Future<void> Function(Product product) onEdit;
+  final Future<void> Function(Product product) onDelete;
+
+  @override
+  State<ProductsTab> createState() => _ProductsTabState();
+}
+
+class _ProductsTabState extends State<ProductsTab> {
+  final TextEditingController _searchController = TextEditingController();
+  String _selectedCategory = 'Todas';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  List<Product> _seedProducts() {
-    final now = DateTime.now();
-    return <Product>[
-      Product(
-        id: _generateId(),
-        nome: 'Martelo 27mm',
-        categoria: 'Ferramentas',
-        preco: 3500,
-        stock: 12,
-        codigoBarras: '1000001',
-        ultimaAtualizacao: now,
+  @override
+  Widget build(BuildContext context) {
+    final products = widget.controller.products.where((product) {
+      final matchesSearch = product.nome.toLowerCase().contains(
+            _searchController.text.trim().toLowerCase(),
+          );
+      final matchesCategory =
+          _selectedCategory == 'Todas' || product.categoria == _selectedCategory;
+      return matchesSearch && matchesCategory;
+    }).toList()
+      ..sort((a, b) => a.nome.compareTo(b.nome));
+
+    final categories = <String>{
+      'Todas',
+      ...defaultCategories,
+      ...widget.controller.products.map((item) => item.categoria),
+    }.toList();
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: <Widget>[
+          TextField(
+            controller: _searchController,
+            decoration: const InputDecoration(
+              hintText: 'Pesquisar produto',
+              prefixIcon: Icon(Icons.search),
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: _selectedCategory,
+            decoration: const InputDecoration(labelText: 'Categoria'),
+            items: categories
+                .map(
+                  (category) => DropdownMenuItem<String>(
+                    value: category,
+                    child: Text(category),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _selectedCategory = value);
+            },
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: products.isEmpty
+                ? const _EmptyState(
+                    icon: Icons.inventory_2_outlined,
+                    title: 'Sem produtos encontrados',
+                    message: 'Ajuste os filtros ou cadastre um novo produto.',
+                  )
+                : ListView.separated(
+                    itemCount: products.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final product = products[index];
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: <Widget>[
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        Text(
+                                          product.nome,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(fontWeight: FontWeight.w700),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Wrap(
+                                          spacing: 8,
+                                          runSpacing: 8,
+                                          children: <Widget>[
+                                            _TagChip(label: product.categoria),
+                                            _TagChip(
+                                              label: 'Stock: ${product.stock}',
+                                              color: product.stock <= 5
+                                                  ? const Color(0xFFFFE1D6)
+                                                  : const Color(0xFFECECEC),
+                                            ),
+                                            if ((product.codigoBarras ?? '').isNotEmpty)
+                                              _TagChip(label: 'Cod: ${product.codigoBarras}'),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuButton<String>(
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        widget.onEdit(product);
+                                      } else {
+                                        widget.onDelete(product);
+                                      }
+                                    },
+                                    itemBuilder: (context) => const <PopupMenuEntry<String>>[
+                                      PopupMenuItem<String>(
+                                        value: 'edit',
+                                        child: Text('Editar'),
+                                      ),
+                                      PopupMenuItem<String>(
+                                        value: 'delete',
+                                        child: Text('Excluir'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                children: <Widget>[
+                                  Expanded(
+                                    child: Text(
+                                      'Preco: ${currencyFormat.format(product.preco)}',
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  Text(
+                                    product.ultimaAtualizacao == null
+                                        ? 'Sem atualizacao'
+                                        : 'Atualizado: ${dateTimeFormat.format(product.ultimaAtualizacao!)}',
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
       ),
-      Product(
-        id: _generateId(),
-        nome: 'Parafuso 8x60',
-        categoria: 'Fixacao',
-        preco: 120,
-        stock: 150,
-        codigoBarras: '1000002',
-        ultimaAtualizacao: now,
-      ),
-      Product(
-        id: _generateId(),
-        nome: 'Tinta Acrilica 18L',
-        categoria: 'Tintas',
-        preco: 28500,
-        stock: 4,
-        codigoBarras: '1000003',
-        ultimaAtualizacao: now,
-      ),
-      Product(
-        id: _generateId(),
-        nome: 'Tomada Dupla',
-        categoria: 'Eletrica',
-        preco: 1800,
-        stock: 8,
-        codigoBarras: '1000004',
-        ultimaAtualizacao: now,
-      ),
-      Product(
-        id: _generateId(),
-        nome: 'Torneira 1/2',
-        categoria: 'Hidraulica',
-        preco: 4200,
-        stock: 6,
-        codigoBarras: '1000005',
-        ultimaAtualizacao: now,
-      ),
-    ];
+    );
+  }
+}
+class CheckoutTab extends StatefulWidget {
+  const CheckoutTab({
+    super.key,
+    required this.controller,
+    required this.onFinalizeSale,
+    required this.onShowHistory,
+    required this.onShowMessage,
+  });
+
+  final StoreController controller;
+  final Future<void> Function() onFinalizeSale;
+  final VoidCallback onShowHistory;
+  final void Function(String message) onShowMessage;
+
+  @override
+  State<CheckoutTab> createState() => _CheckoutTabState();
+}
+
+class _CheckoutTabState extends State<CheckoutTab> {
+  final TextEditingController _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
-  String _generateId() {
-    final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final suffix = _random.nextInt(999999).toString().padLeft(6, '0');
-    return '$timestamp$suffix';
-  }
+  @override
+  Widget build(BuildContext context) {
+    final filteredProducts = widget.controller.products.where((product) {
+      return product.nome.toLowerCase().contains(
+            _searchController.text.trim().toLowerCase(),
+          );
+    }).toList()
+      ..sort((a, b) => a.nome.compareTo(b.nome));
 
-  bool _isSameDate(DateTime first, DateTime second) {
-    return first.year == second.year &&
-        first.month == second.month &&
-        first.day == second.day;
-  }
+    final cartEntries = widget.controller.cartEntries;
 
-  void decrementCartQuantity(Product product) {
-    final currentQty = _cart[product.id] ?? 0;
-    
-    if (currentQty <= 1) {
-      _cart.remove(product.id);
-    } else {
-      _cart[product.id] = currentQty - 1;
-    }
-    notifyListeners();
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: <Widget>[
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        'Adicionar ao carrinho',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: widget.onShowHistory,
+                      icon: const Icon(Icons.history),
+                      label: const Text('Historico'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchController,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    hintText: 'Pesquisar para venda',
+                    prefixIcon: Icon(Icons.search),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (filteredProducts.isEmpty)
+                  const _EmptyState(
+                    icon: Icons.search_off,
+                    title: 'Nenhum produto encontrado',
+                    message: 'Tente outro termo para iniciar a venda.',
+                  )
+                else
+                  ...filteredProducts.map(
+                    (product) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Card(
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 4,
+                          ),
+                          title: Text(product.nome),
+                          subtitle: Text(
+                            '${product.categoria}  |  Stock: ${product.stock}',
+                          ),
+                          trailing: SizedBox(
+                            width: 130,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Text('${currencyFormat.format(product.preco)} '),
+                                IconButton(
+                                  icon: const Icon(Icons.add_shopping_cart, color: Color(0xFFFF7A00)),
+                                  onPressed: () {
+                                    final err = widget.controller.addToCart(product);
+                                    if (err != null) {
+                                      widget.onShowMessage(err);
+                                    } else {
+                                      widget.onShowMessage('${product.nome} adicionado.');
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        if (cartEntries.isNotEmpty) ...[
+          Card(
+            color: const Color(0xFFF9F9F9),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Itens no Carrinho',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  ...cartEntries.map((entry) {
+                    final product = entry.product;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(product.nome),
+                      subtitle: Text('${entry.quantity}x ${currencyFormat.format(product.preco)}'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.remove_circle_outline),
+                            onPressed: () => widget.controller.decrementCartQuantity(product),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => widget.controller.removeFromCart(product),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const Divider(),
+                  Row(
+                    // RESOLVIDO: 'MainAxisAlignment.spaceBetween' correto em vez de '.between'!
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text(
+                        currencyFormat.format(widget.controller.cartTotal),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFFFF7A00)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: const Color(0xFFFF7A00)),
+                      onPressed: widget.onFinalizeSale,
+                      child: const Text('Finalizar Venda'),
+                    ),
+                  )
+                ],
+              ),
+            ),
+          )
+        ]
+      ],
+    );
   }
+}
 
-  void removeFromCart(Product product) {
-    _cart.remove(product.id);
-    notifyListeners();
+class StockTab extends StatelessWidget {
+  const StockTab({
+    super.key,
+    required this.controller,
+    required this.onRestock,
+  });
+
+  final StoreController controller;
+  final Function(Product) onRestock;
+
+  @override
+  Widget build(BuildContext context) {
+    final products = controller.products;
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: products.length,
+      itemBuilder: (context, index) {
+        final product = products[index];
+        return Card(
+          child: ListTile(
+            title: Text(product.nome),
+            subtitle: Text('Estoque atual: ${product.stock}'),
+            trailing: IconButton(
+              icon: const Icon(Icons.add_box),
+              onPressed: () => onRestock(product),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class ReportsTab extends StatelessWidget {
+  const ReportsTab({super.key, required this.controller});
+  final StoreController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('Aba de Relatórios'));
   }
 }
